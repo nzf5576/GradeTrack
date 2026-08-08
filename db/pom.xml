@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.gradetrack</groupId>
+  <artifactId>db-migrations</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <flyway.version>10.17.0</flyway.version>
+    <postgresql.version>42.7.4</postgresql.version>
+
+    <!-- Override with -Ddb.url=... -Ddb.user=... -Ddb.password=... pointing at the RDS
+         endpoint from `cdk deploy` output. Never commit real values here. -->
+    <db.url>jdbc:postgresql://localhost:5432/gradetrack?sslmode=require</db.url>
+    <db.user>gradetrack</db.user>
+    <db.password>changeme</db.password>
+
+    <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
+    <sql-maven-plugin.version>3.0.0</sql-maven-plugin.version>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-maven-plugin</artifactId>
+        <version>${flyway.version}</version>
+        <configuration>
+          <url>${db.url}</url>
+          <user>${db.user}</user>
+          <password>${db.password}</password>
+          <locations>
+            <location>filesystem:migrations</location>
+          </locations>
+        </configuration>
+        <dependencies>
+          <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+          </dependency>
+          <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>${flyway.version}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+
+      <!-- Dev-only seed data, deliberately NOT part of the Flyway chain (see db/seed/dev_seed.sql).
+           Resolves ${devParentUserId} in the seed file, then executes it directly over JDBC.
+           Run explicitly with:
+             mvn -f db/pom.xml generate-resources sql:execute@seed \
+               -Ddb.url=... -Ddb.user=... -Ddb.password=... -DdevParentUserId=<uuid> -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>${maven-resources-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>resolve-seed</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/seed</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>seed</directory>
+                  <filtering>true</filtering>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>sql-maven-plugin</artifactId>
+        <version>${sql-maven-plugin.version}</version>
+        <dependencies>
+          <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+          </dependency>
+        </dependencies>
+        <configuration>
+          <driver>org.postgresql.Driver</driver>
+          <url>${db.url}</url>
+          <username>${db.user}</username>
+          <password>${db.password}</password>
+          <!-- sql-maven-plugin skips by default on pom-packaged modules (assumes aggregator);
+               this module is a leaf module that just happens not to produce a jar. -->
+          <forceMojoExecution>true</forceMojoExecution>
+          <srcFiles>
+            <srcFile>${project.build.directory}/seed/dev_seed.sql</srcFile>
+          </srcFiles>
+        </configuration>
+        <executions>
+          <execution>
+            <id>seed</id>
+            <phase>none</phase>
+            <goals>
+              <goal>execute</goal>
+            </goals>
+          </execution>
+          <!-- Ad-hoc one-off SQL (e.g. promoting a user_account to admin) when psql isn't
+               available. Run with:
+                 mvn -f db/pom.xml sql:execute@run-sql \
+                   -Ddb.url=... -Ddb.user=... -Ddb.password=... -DsqlCommand="..." -->
+          <execution>
+            <id>run-sql</id>
+            <phase>none</phase>
+            <goals>
+              <goal>execute</goal>
+            </goals>
+            <configuration>
+              <srcFiles combine.self="override" />
+              <sqlCommand>${sqlCommand}</sqlCommand>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
