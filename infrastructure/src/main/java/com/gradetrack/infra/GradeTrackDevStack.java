@@ -31,6 +31,15 @@ import software.amazon.awscdk.services.rds.DatabaseInstanceEngine;
 import software.amazon.awscdk.services.rds.PostgresEngineVersion;
 import software.amazon.awscdk.services.rds.PostgresInstanceEngineProps;
 import software.amazon.awscdk.services.rds.StorageType;
+import software.amazon.awscdk.services.cloudfront.BehaviorOptions;
+import software.amazon.awscdk.services.cloudfront.Distribution;
+import software.amazon.awscdk.services.cloudfront.ErrorResponse;
+import software.amazon.awscdk.services.cloudfront.PriceClass;
+import software.amazon.awscdk.services.cloudfront.ViewerProtocolPolicy;
+import software.amazon.awscdk.services.cloudfront.origins.S3BucketOrigin;
+import software.amazon.awscdk.services.s3.Bucket;
+import software.amazon.awscdk.services.s3.deployment.BucketDeployment;
+import software.amazon.awscdk.services.s3.deployment.Source;
 import software.constructs.Construct;
 
 import java.util.List;
@@ -167,6 +176,48 @@ public class GradeTrackDevStack extends Stack {
         CfnOutput.Builder.create(this, "ApiUrl")
                 .description("API Gateway invoke URL - use as VITE_API_URL in frontend/.env")
                 .value(api.getUrl())
+                .build();
+
+        // Static frontend hosting: private S3 bucket behind CloudFront (Origin Access Control,
+        // so the bucket itself stays fully private). Errors are rewritten to /index.html because
+        // this is a client-side-routed SPA (BrowserRouter) - a direct load of e.g. /dashboard has
+        // no matching S3 key and must fall through to the app shell to let React Router handle it.
+        Bucket frontendBucket = Bucket.Builder.create(this, "FrontendBucket")
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .autoDeleteObjects(true)
+                .build();
+
+        Distribution distribution = Distribution.Builder.create(this, "FrontendDistribution")
+                .defaultRootObject("index.html")
+                .priceClass(PriceClass.PRICE_CLASS_100)
+                .defaultBehavior(BehaviorOptions.builder()
+                        .origin(S3BucketOrigin.withOriginAccessControl(frontendBucket))
+                        .viewerProtocolPolicy(ViewerProtocolPolicy.REDIRECT_TO_HTTPS)
+                        .build())
+                .errorResponses(List.of(
+                        ErrorResponse.builder()
+                                .httpStatus(403)
+                                .responseHttpStatus(200)
+                                .responsePagePath("/index.html")
+                                .build(),
+                        ErrorResponse.builder()
+                                .httpStatus(404)
+                                .responseHttpStatus(200)
+                                .responsePagePath("/index.html")
+                                .build()
+                ))
+                .build();
+
+        BucketDeployment.Builder.create(this, "FrontendDeployment")
+                .sources(List.of(Source.asset("../frontend/dist")))
+                .destinationBucket(frontendBucket)
+                .distribution(distribution)
+                .distributionPaths(List.of("/*"))
+                .build();
+
+        CfnOutput.Builder.create(this, "FrontendUrl")
+                .description("CloudFront URL for the deployed frontend")
+                .value("https://" + distribution.getDistributionDomainName())
                 .build();
     }
 
